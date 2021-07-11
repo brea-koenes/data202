@@ -1,0 +1,123 @@
+---
+title: 'Lab 8: Feature Engineering'
+author: "K Arnold"
+date: "10/23/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidymodels)
+```
+
+## Data
+
+Load data from `modeldata` package.
+
+```{r load-data}
+data(ames, package = "modeldata")
+ames <- ames %>% 
+  filter(Gr_Liv_Area < 4000, Sale_Condition == "Normal") %>% 
+  mutate(across(where(is.integer), as.double))
+```
+
+Hold out a test set.
+
+```{r train-test-split}
+set.seed(10) # Seed the random number generator
+ames_split <- initial_split(ames, prop = 2/3) # Split our data randomly
+ames_train <- training(ames_split)
+ames_test <- testing(ames_split)
+```
+
+We'll use one example home from the test set.
+
+```{r example-home}
+example_home <- ames_test %>% slice(1)
+example_home %>% select(Gr_Liv_Area, Sale_Price)
+```
+
+## Recipe
+
+Here we set up the recipe:
+
+```{r prep-recipe}
+ames_recipe <- 
+  recipe(Sale_Price ~ Gr_Liv_Area + Latitude + Longitude, data = ames_train) %>% 
+  prep()
+ames_recipe %>% summary()
+```
+
+Let's look at its output on the training data:
+
+```{r apply-recipe-train}
+ames_recipe %>% bake(new_data = ames_train)
+```
+
+## Workflow
+
+`workflow` = `recipe` + `model`
+
+```{r workflow}
+ames_workflow <- workflow() %>%
+  add_model(linear_reg() %>% set_engine("lm")) %>% 
+  add_recipe(ames_recipe)
+```
+
+Workflows can `fit` and `predict`. First let's `fit` it on our training data...
+
+```{r fit-workflow1-on-train}
+fitted_workflow <- fit(ames_workflow, data = ames_train)
+```
+
+Now let's see what it predicts for our example home.
+
+```{r predict-workflow1-on-example}
+fitted_workflow %>% predict(example_home)
+```
+
+Let's peek inside the model.
+
+```{r unscaled-latlong}
+fitted_workflow %>% 
+  tidy() %>%
+  filter(term != "(Intercept)") %>% 
+  ggplot(aes(x = estimate, y = term)) + geom_col()
+```
+
+## Test the model
+
+```{r preprocess-test-data}
+fitted_workflow %>%
+  pull_workflow_prepped_recipe() %>% 
+  bake(new_data = ames_test) %>% #<<
+  summary()
+```
+
+```{r predict-on-test-data}
+fitted_workflow %>%
+  predict(ames_test) %>% 
+  bind_cols(ames_test) %>% 
+  ggplot(aes(x = Sale_Price, y = Sale_Price - .pred)) + geom_point()
+```
+
+## Conditional Logic
+
+```{r}
+ames_train_2 <- ames_train %>% 
+  mutate(remodeled = case_when(
+    Year_Built == Year_Remod_Add ~ "no",
+    TRUE                         ~ "yes") %>%
+    as_factor()
+  )
+```
+
+
+```{r remodeled}
+ames_train_2 %>% 
+  ggplot(aes(x = Gr_Liv_Area, y = Sale_Price, color = remodeled)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
